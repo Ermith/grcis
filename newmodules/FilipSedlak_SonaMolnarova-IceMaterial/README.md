@@ -1,7 +1,7 @@
 # Ice Cube material
 
 This file contains PhongMaterial under AdditionalMaterials
-with parameters to produce nice icy appearence.
+with parameters to produce nice translucent icy appearence.
 
 Usage:
 ```
