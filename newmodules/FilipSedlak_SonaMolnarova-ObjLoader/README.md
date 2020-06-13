@@ -10,7 +10,7 @@ Additional speedups are to be done in future versions.
 FastTriangleMesh is an extension of TriangleMesh, therefore it is used in the same way
 and all of the old methods are available. Fast and Easy!
 
-##changelog
+## changelog
 + If mesh is closed without holes (1 whole structure), it will be treated
 as a solid object for purposes of ray refraction.
 If the mesh is not closed, similiar effect can be obtained
