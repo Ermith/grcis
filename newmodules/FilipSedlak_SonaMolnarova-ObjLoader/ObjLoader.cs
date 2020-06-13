@@ -7,28 +7,55 @@ using Rendering;
 using OpenTK;
 using System.Globalization;
 using System.IO.Compression;
+using MathSupport;
 
 namespace Scene3D
 {
 
   public partial class SceneBrep
   {
-    const double lambda = 4;
+    const double lambda = 3;
 
-    List<int>[,,] trianglesGrid;
-    public Vector3d bMin, bMax;
-    Vector3d gridRes;
-    Vector3d cellSize;
+    /// <summary>
+    /// FilipSedlak_SonaMolnarova
+    /// Describes, whether the mesh doesn't havee holes, so it can be used as material with volume.
+    /// </summary>
+    public bool IsClosed { get; private set; } = false;
 
-    public void Build()
+    private Vector3d bMin;
+    private Vector3d bMax;
+
+    /// <summary>
+    /// FilipSedlak_SonaMolnarova
+    /// ... Pretty self explanatory.
+    /// </summary>
+    public Vector3d GridResolution { get; private set; }
+    /// <summary>
+    /// FilipSedlak_SonaMolnarova
+    /// Size of a cell in the grid accelerating structure.
+    /// </summary>
+    public Vector3d CellSize { get; private set; }
+    /// <summary>
+    /// FilipSedlak_SonaMolnarova
+    /// Accelerating structure to prevent from testing all triangles.
+    /// </summary>
+    public List<int>[,,] TrianglesGrid { get; private set; }
+
+    /// <summary>
+    /// FilipSedlak_SonaMolnarova
+    /// Prepares for usage in FastTriangleMesh.
+    /// Builds CornerTable, Bouinding Box and Grid accelerating structure.
+    /// </summary>
+    public void Build ()
     {
       BuildCornerTable();
       BuildBoundingBox();
-      // TODO
-      //BuildGrid();
+      //ComputeNormals(); --> bugged: NaN values
+      BuildGrid();
+      IsClosed = ((Triangles / 2 + 2) == Vertices);
     }
 
-    public void BuildBoundingBox ()
+    private void BuildBoundingBox ()
     {
       bMin = new Vector3d(double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity);
       bMax = new Vector3d(double.NegativeInfinity, double.NegativeInfinity, double.NegativeInfinity);
@@ -37,47 +64,79 @@ namespace Scene3D
       {
         Vector3 v = geometry[i];
 
-        if (v.X < bMin.X)
-        { bMin.X = v.X; }
-        if (v.Y < bMin.Y)
-        { bMin.Y = v.Y; }
-        if (v.Z < bMin.Z)
-        { bMin.Z = v.Z; }
+        if (v.X < bMin.X) bMin.X = v.X;
+        if (v.Y < bMin.Y) bMin.Y = v.Y;
+        if (v.Z < bMin.Z) bMin.Z = v.Z;
 
-        if (v.X > bMax.X)
-        { bMax.X = v.X; }
-        if (v.Y > bMax.Y)
-        { bMax.Y = v.Y; }
-        if (v.Z > bMax.Z)
-        { bMax.Z = v.Z; }
+        if (v.X > bMax.X) bMax.X = v.X;
+        if (v.Y > bMax.Y) bMax.Y = v.Y;
+        if (v.Z > bMax.Z) bMax.Z = v.Z; 
       }
-
     }
 
-    public void BuildGrid ()
+    private bool AABBOverlap (Vector3 firstMin, Vector3 firstMax, Vector3 secondMin, Vector3 secondMax)
+    {
+      Vector3 min, max;
+      min.X = Math.Max(firstMin.X, secondMin.X);
+      min.Y = Math.Max(firstMin.Y, secondMin.Y);
+      min.Z = Math.Max(firstMin.Z, secondMin.Z);
+
+      max.X = Math.Min(firstMax.X, secondMax.X);
+      max.Y = Math.Min(firstMax.Y, secondMax.Y);
+      max.Z = Math.Min(firstMax.Z, secondMax.Z);
+
+      return (min.X <= max.X && min.Y <= max.Y && min.Z <= max.Z);
+    }
+
+    private void BuildGrid ()
     {
       // Create the grid
       Vector3d gridSize = bMax - bMin;
       double volume = gridSize.X * gridSize.Y * gridSize.Z;
       double coeff = Math.Pow(lambda * Triangles / volume, 1/3.0);
 
+      GridResolution = gridSize * coeff;
+      GridResolution = new Vector3d(Math.Floor(GridResolution.X), Math.Floor(GridResolution.Y), Math.Floor(GridResolution.Z));
+      
+      CellSize = Vector3d.Divide(gridSize, GridResolution);
 
-      gridRes = gridSize * coeff;
-      cellSize = Vector3d.Divide(gridSize, gridRes);
-
-      Vector3d minCell = Vector3d.Divide(bMin, cellSize);
-      Vector3d maxCell = Vector3d.Divide(bMax, cellSize);
-
-      trianglesGrid = new List<int>[(int)gridRes.X + 1, (int)gridRes.Y + 1, (int)gridRes.Z + 1];
+      TrianglesGrid = new List<int>[(int)GridResolution.X, (int)GridResolution.Y, (int)GridResolution.Z];
 
       // Fill in the triangles
-      for (int x = 0; x < gridRes.X; x++)
-      {
-      }
+      Vector3 pos;
+      Vector3 trMin;
+      Vector3 trMax;
+      Vector3 cellMin;
+      Vector3 cellMax;
+      for (pos.X = 0; pos.X < GridResolution.X; pos.X++)
+        for (pos.Y = 0; pos.Y < GridResolution.Y; pos.Y++)
+          for (pos.Z = 0; pos.Z < GridResolution.Z; pos.Z++)
+          {
+            TrianglesGrid[(int)pos.X, (int)pos.Y, (int)(pos.Z)] = new List<int>();
+
+            // check each triangle against the current cell
+            cellMin = (Vector3)bMin + (Vector3)CellSize * pos;
+            cellMax = cellMin + (Vector3)CellSize;
+            for (int tr = 0; tr < Triangles; tr++)
+            {
+              trMin = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+              trMax = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+              TriangleBoundingBox(tr, ref trMin, ref trMax);
+
+
+              if (AABBOverlap(trMin, trMax, cellMin, cellMax))
+              {
+                TrianglesGrid[(int)pos.X, (int)pos.Y, (int)pos.Z].Add(tr);
+              }
+            }
+
+          }
+
     }
 
-    public bool BoundingBoxIntersection (Vector3d ori, Vector3d dir)
+    public bool BoundingBoxIntersection (Vector3d ori, Vector3d dir, out double tmin, out double tmax)
     {
+
       Vector3d invDir = Vector3d.Divide(new Vector3d(1, 1, 1), dir);
 
       Vector3d t1 = (bMin - ori) * invDir;
@@ -86,8 +145,8 @@ namespace Scene3D
       double tx1 = (bMin.X - ori.X)*invDir.X;
       double tx2 = (bMax.X - ori.X)*invDir.X;
 
-      double tmin = Math.Min(tx1, tx2);
-      double tmax = Math.Max(tx1, tx2);
+      tmin = Math.Min(tx1, tx2);
+      tmax = Math.Max(tx1, tx2);
 
       double ty1 = (bMin.Y - ori.Y)*invDir.Y;
       double ty2 = (bMax.Y - ori.Y)*invDir.Y;
@@ -102,71 +161,215 @@ namespace Scene3D
       tmax = Math.Min(tmax, Math.Max(tz1, tz2));
 
       return tmax >= Math.Max(0.0, tmin);
+      /**/
+    }
+
+    /// <summary>
+    /// FilipSedlak_SonaMolnarova
+    /// Gets the Axis Aligned Bounding Box in shape of minimum and maximum vertex.
+    /// </summary>
+    /// <param name="min"></param>
+    /// <param name="max"></param>
+    public void GetBoundingBox (out Vector3d min, out Vector3d max)
+    {
+      min = bMin;
+      max = bMax;
     }
   }
 }
 
 namespace FilipSedlak_SonaMolnarova
 {
-  // Not yet used
-  interface ISceneBrep
+
+  /// <summary>
+  /// Better, Faster, Stronger than regular TriangleMesh.
+  /// </summary>
+  public class FastTriangleMesh : TriangleMesh, ISolid
   {
-    int Triangles { get; }
-    int Lines { get; }
-    float LineWidth { get; }
-    int Corners { get; }
-    int AddVertex (Vector3 v);
-    Vector3 GetVertex (int v);
-    void SetVertex (int v, Vector3 pos);
-    void SetNormal (int v, Vector3 normal);
-    Vector3 GetNormal (int v);
-    void SetColor (int v, Vector3 color);
-    Vector3 GetColor (int v);
-    void SetTxtCoord (int v, Vector2 txt);
-    Vector2 GetTxtCoord (int v);
-    int AddTriangle (int v1, int v2, int v3);
-    int AddLine (int v1, int v2);
-    void GetTriangleVertices (int tr, out int v1, out int v2, out int v3);
-    void GetLineVertices (int li, out int v1, out int v2);
-    void SetTriangleVertices (int tr, int v1, int v2, int v3);
-    void GetTriangleVertices (int tr, out Vector3 v1, out Vector3 v2, out Vector3 v3);
-    void GetTriangleVertices (int tr, out Vector4 v1, out Vector4 v2, out Vector4 v3);
-    void TriangleBoundingBox (int tr, ref Vector3 min, ref Vector3 max);
-    void GenerateColors (int seed);
-    void ComputeNormals ();
-    float GetDiameter (out Vector3 center);
-    bool IntersectsBoundingBox (Vector3 ori, Vector3 dir);
-  }
-
-  /**/
-
-  /**/
-
-  public class FastTriangleMesh : TriangleMesh, ISolid {
     public FastTriangleMesh (SceneBrep m) : base(m) { }
+
+    private bool InBounds (int x, int y, int z)
+    {
+      return (
+        x >= 0
+        && y >= 0
+        && z >= 0
+        && x < mesh.GridResolution.X
+        && y < mesh.GridResolution.Y
+        && z < mesh.GridResolution.Z
+        );
+    }
 
     public override LinkedList<Intersection> Intersect (Vector3d ori, Vector3d dir)
     {
 
-      if (mesh.BoundingBoxIntersection(ori, dir))
+      if (mesh == null || mesh.Triangles < 1
+        || !mesh.BoundingBoxIntersection(ori, dir, out double tmin, out double tmax)
+        )
+        return null;
+
+
+      // INIT
+      //=========================================================
+
+      List<Intersection> result = null;
+
+      mesh.GetBoundingBox(out Vector3d bMin, out Vector3d bMax);
+
+      Vector3d invDir = Vector3d.Divide(Vector3d.One, dir);
+      Vector3d coef = ori + dir * tmin - bMin;
+      Vector3d cell = new Vector3d(
+        Arith.Clamp(Math.Floor(coef.X / mesh.CellSize.X), 0, mesh.GridResolution.X - 1),
+        Arith.Clamp(Math.Floor(coef.Y / mesh.CellSize.Y), 0, mesh.GridResolution.Y - 1),
+        Arith.Clamp(Math.Floor(coef.Z / mesh.CellSize.Z), 0, mesh.GridResolution.Z - 1)
+        );
+
+      Vector3d step = new Vector3d(
+        (dir.X < 0) ? -1 : 1,
+        (dir.Y < 0) ? -1 : 1,
+        (dir.Z < 0) ? -1 : 1
+        );
+
+      Vector3d deltaT;
+      deltaT.X = (dir.X == 0) ? 0 : mesh.CellSize.X / Math.Abs(dir.X);
+      deltaT.Y = (dir.Y == 0) ? 0 : mesh.CellSize.Y / Math.Abs(dir.Y);
+      deltaT.Z = (dir.Z == 0) ? 0 : mesh.CellSize.Z / Math.Abs(dir.Z);
+
+      Vector3d T;
+      double tmpd = (dir.X < 0) ? cell.X : cell.X + 1;
+      T.X = tmin + (tmpd * mesh.CellSize.X - coef.X) * invDir.X;
+      tmpd = (dir.Y < 0) ? cell.Y : cell.Y + 1;
+      T.Y = tmin + (tmpd * mesh.CellSize.Y - coef.Y) * invDir.Y;
+      tmpd = (dir.Z < 0) ? cell.Z : cell.Z + 1;
+      T.Z = tmin + (tmpd * mesh.CellSize.Z - coef.Z) * invDir.Z;
+
+      bool[] candidates = new bool[mesh.Triangles];
+      double tNextCrossing;
+
+      // Trace the ray through the grid
+      //=========================================================
+
+      while (true)
       {
-        return base.Intersect(ori, dir);
+
+        foreach (int tr in mesh.TrianglesGrid[(int)cell.X, (int)cell.Y, (int)cell.Z])
+          candidates[tr] = true;
+
+
+        double min = Math.Min(Math.Min(T.X, T.Y), T.Z);
+
+        if (min == T.X)
+        {
+          tNextCrossing = T.X;
+          T.X += deltaT.X;
+          cell.X += step.X;
+        } else if (min == T.Y)
+        {
+          tNextCrossing = T.Y;
+          T.Y += deltaT.Y;
+          cell.Y += step.Y;
+        } else
+        {
+          tNextCrossing = T.Z;
+          T.Z += deltaT.Z;
+          cell.Z += step.Z;
+        }
+
+
+        if (
+          tNextCrossing > tmax
+          || !InBounds((int)cell.X, (int)cell.Y, (int)cell.Z)
+          )
+          break;
       }
 
+      // intersect the found triangles
+      //=========================================================
 
-      return null;
+      for (int id = 0; id < mesh.Triangles; id++)
+      {
+        if (!candidates[id])
+          continue;
+
+
+        Vector3 a, b, c;
+        mesh.GetTriangleVertices(id, out a, out b, out c);
+        Vector2d uv;
+        CSGInnerNode.countTriangles++;
+        double t = Geometry.RayTriangleIntersection(ref ori, ref dir, ref a, ref b, ref c, out uv);
+        if (double.IsInfinity(t))
+          continue;
+
+        if (result == null)
+          result = new List<Intersection>();
+
+        Vector3 v1 = a - b;
+        Vector3 v2 = a - c;
+
+        Vector3 triangleNormal = Vector3.Cross(v1, v2).Normalized();
+        double dot = Vector3d.Dot(dir, (Vector3d)triangleNormal);
+
+        //ShellMode = true;
+
+        //bool enter = (result.Count % 2) == 0; // && (tmin > 0);
+        bool enter = (ShellMode || !mesh.IsClosed || dot < 0);
+        //bool enter = true;
+        bool front = enter;
+
+        // Set the 1st Intersection.
+        TmpData tmp = new TmpData
+        {
+          face = id,
+          uv   = uv
+        };
+
+        Intersection i = new Intersection(this)
+        {
+          T           = t,
+          Enter       = enter,
+          Front       = front,
+          CoordLocal  = ori + t * dir,
+          SolidData   = tmp
+        };
+
+        result.Add(i);
+
+        if (!ShellMode)
+          continue;
+
+        // Set the 2nd Intersection.
+        t += Intersection.SHELL_THICKNESS;
+        i = new Intersection(this)
+        {
+          T = t,
+          Enter = false,
+          Front = false,
+          CoordLocal = ori + t * dir,
+          SolidData = tmp
+        };
+
+        result.Add(i);
+      }
+
+      if (result == null)
+        return null;
+
+      // Finalizing the result: sort the result list
+      result.Sort();
+      return new LinkedList<Intersection>(result);
     }
 
-    public new void GetBoundingBox(out Vector3d corner1, out Vector3d corner2)
+    public new void GetBoundingBox (out Vector3d corner1, out Vector3d corner2)
     {
-      corner1 = mesh.bMin;
-      corner2 = mesh.bMax;
+      mesh.GetBoundingBox(out corner1, out corner2);
     }
   }
 
 
   public class ObjLoader
   {
+    static readonly char[] DELIMITERS = {' ', '\t'};
+
     /// <summary>
     /// Parses all objects stored in .obj input file. All corresponding .mtl files have to be in the same directory!
     /// </summary>
@@ -449,7 +652,7 @@ namespace FilipSedlak_SonaMolnarova
         }
 
         string line = reader.ReadLine();
-        string[] tokens = line.Split();
+        string[] tokens = line.Split(DELIMITERS, StringSplitOptions.RemoveEmptyEntries);
         if (tokens.Length == 0)
           continue;
         switch (tokens[0])
@@ -588,8 +791,7 @@ namespace FilipSedlak_SonaMolnarova
       txtCoordsCount += txtCoords.Count;
       normalsCount += normals.Count;
 
-      scene.BuildCornerTable();
-      scene.BuildBoundingBox();
+      scene.Build();
 
       return new Tuple<string, FastTriangleMesh>(materialName, new FastTriangleMesh(scene));
     }

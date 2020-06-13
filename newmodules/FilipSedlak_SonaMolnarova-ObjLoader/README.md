@@ -10,6 +10,14 @@ Additional speedups are to be done in future versions.
 FastTriangleMesh is an extension of TriangleMesh, therefore it is used in the same way
 and all of the old methods are available. Fast and Easy!
 
+##changelog
++ If mesh is closed without holes (1 whole structure), it will be treated
+as a solid object for purposes of ray refraction.
+If the mesh is not closed, similiar effect can be obtained
+by setting the ShellMode to true.
+
++ Added grid accelerating structure - even faster rendering.
+
 # ObjLoader
 This extension implements faster loader of .obj files with possibility of loading basic material. Loaded material only sets coefficients and base color of already implemented PhongMaterial.
 
@@ -46,3 +54,5 @@ foreach(var mesh in meshes)
 }
 ...
 ```
+## changelog
++ Fixed loading lines with multiple whitespaces inbetween elements.
